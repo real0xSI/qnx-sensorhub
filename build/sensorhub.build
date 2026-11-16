@@ -1,0 +1,85 @@
+# sensorhub.build — mkifs buildfile for QNX 8.0 on QEMU virt (aarch64).
+#
+# Build with: scripts/build-ifs.sh (run from the repo root after
+# `source <sdp-install>/qnxsdp-env.sh && make -C build`).
+# Produces: out/aarch64/sensorhub.ifs
+#
+# Verified against the real SDP 8.0 target tree 2026-11-16 (part 6):
+#   - startup binary on disk is startup-qemu-virt (not startup-qemuvirt)
+#   - libc is libc.so.6, dynamic linker is ldqnx-64.so.2 (in usr/lib)
+#   - libgcc_s.so.1 present; devc-serpl011 also needs libsecpol.so.1
+#   - there is NO /bin/ls anywhere in the target tree — dropped.
+#     (demo uses ksh glob instead: echo /dev/sensor*)
+#   - QEMU virt PL011 UART0 is at 0x09000000, IRQ 33 (SPI 1).
+#   - [image] address matches QEMU -kernel raw-load address for
+#     aarch64 virt (RAM base 0x40000000 + 0x80000).
+#   - BSP note: com.qnx.qnx800.target.qemuvirt was NOT re-installed via
+#     CLT in part 6 (the install profile was lost in the 17:41 service
+#     restart and CLT now demands -destination, the exact path that wiped
+#     the license in part 5). Its only runtime asset, startup-qemu-virt,
+#     was already in the target tree and its SHA-512 matches the package
+#     descriptor exactly — functionally installed.
+#   - [image] address is 0x40200000 (NOT 0x40080000). QEMU reserves a 1MB
+#     DTB region at RAM base 0x40000000-0x40100000 for ELF -kernel boots
+#     and silently DROPS the DTB if the image overlaps it — the startup
+#     then gets x0=0 and parks in a wfi loop (no FDT = no RAM/UART info).
+#     Verified 2026-11-16 part 6: `info roms` shows the 1MB "dtb" ROM for
+#     a kernel whose segments avoid that range, and NO dtb ROM at all when
+#     the image sits at 0x40080000. The shim (out/aarch64/shim4.elf) sets
+#     x0=0x40000000 (QEMU's DTB) and jumps to the IFS entry at image+0xda8.
+
+[image=0x40200000]
+# Search path for absolute-path entries (/sbin/..., /bin/...): the target
+# tree for this CPU. Bare library names resolve via the default lib dirs.
+[search=/home/hatch/qnx/qnx800/target/qnx/aarch64le:/home/hatch/qnx/qnx800/target/qnx/aarch64le/boot/sys:/home/hatch/qnx/qnx800/target/qnx/aarch64le/lib:/home/hatch/qnx/qnx800/target/qnx/aarch64le/usr/lib:.]
+[virtual=aarch64le,elf] .bootstrap = {
+    startup-qemu-virt -v
+    PATH=/proc/boot:/bin:/usr/bin:/sbin:/usr/sbin LD_LIBRARY_PATH=/proc/boot:/lib:/usr/lib procnto-smp-instr -v
+}
+
+[+script] .script = {
+    display_msg "qnx-sensorhub demo — QNX 8.0 on QEMU virt"
+    # QEMU virt PL011 UART0 at 0x09000000, IRQ 33 (SPI 1).
+    devc-serpl011 -e -b115200 0x09000000,33 &
+    waitfor /dev/ser1
+    reopen /dev/ser1
+    display_msg "serial console up — auto-test running, then interactive shell"
+    display_msg "auto-test: starting sensorhub"
+    sensorhub &
+    waitfor /dev/sensor0
+    display_msg "auto-test: devices /dev/sensor0 /dev/sensor1"
+    display_msg "auto-test: sensorctl -n 3 (read /dev/sensor0)"
+    sensorctl -n 3
+    display_msg "auto-test: sensorctl -d /dev/sensor1 -n 2"
+    sensorctl -d /dev/sensor1 -n 2
+    display_msg "auto-test: sensorctl -r 100 -n 2 (devctl SET_RATE)"
+    sensorctl -r 100 -n 2
+    display_msg "auto-test: threshold pulse (set 23C, subscribe, wait)"
+    sensorctl -t 23 -S &
+    sleep 8
+    display_msg "auto-test: sensorctl -s (devctl GET_STATS)"
+    sensorctl -s
+    display_msg "auto-test done — interactive shell below"
+    [+session] ksh &
+}
+
+# The runtime linker is a REAL binary, ldqnx-64.so.2 (311KB in the
+# target tree's usr/lib), NOT a symlink to libc.so.6. libc.so.6 has
+# e_entry 0x0, so a symlink made every dynamic process jump to its own
+# load base and die SIGILL on the ELF header. Fixed 2026-11-16 part 6.
+/usr/lib/ldqnx-64.so.2=/home/hatch/qnx/qnx800/target/qnx/aarch64le/usr/lib/ldqnx-64.so.2
+libc.so.6
+libgcc_s.so.1
+libsecpol.so.1
+
+# NOTE (SDP 8.0 mkifs): the [data=copy] attribute is no longer supported —
+# plain entries are copied into the image by default.
+# Absolute image paths are NOT resolved against the target tree by SDP 8
+# mkifs — use image-path=host-path with literal host paths for them.
+/sbin/devc-serpl011=/home/hatch/qnx/qnx800/target/qnx/aarch64le/sbin/devc-serpl011
+/bin/ksh=/home/hatch/qnx/qnx800/target/qnx/aarch64le/bin/ksh
+/bin/sleep=sleep
+/bin/pidin=/home/hatch/qnx/qnx800/target/qnx/aarch64le/bin/pidin
+/bin/slay=/home/hatch/qnx/qnx800/target/qnx/aarch64le/bin/slay
+/bin/sensorhub=sensorhub
+/bin/sensorctl=sensorctl

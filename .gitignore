@@ -1,0 +1,13 @@
+# build outputs (binaries + IFS; rebuild with make + scripts/build-ifs.sh)
+out/*/sensorhub
+out/*/sensorctl
+out/*/sensorhub.ifs
+out/*/sleep
+out/*/*.o
+out/*/*.elf
+
+# logs and caches
+*.log
+__pycache__/
+*.pyc
+.DS_Store
